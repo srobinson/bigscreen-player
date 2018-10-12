@@ -24,7 +24,11 @@ define('bigscreenplayer/playbackstrategy/msestrategy',
         MANIFEST_LOADED: 'manifestLoaded',
         MANIFEST_VALIDITY_CHANGED: 'manifestValidityChanged',
         QUALITY_CHANGE_RENDERED: 'qualityChangeRendered',
-        METRIC_ADDED: 'metricAdded'
+        METRIC_ADDED: 'metricAdded',
+        FRAGMENT_LOADING_ABANDONED: 'fragmentLoadingAbandoned',
+        FRAGMENT_LOADING_COMPLETED: 'fragmentLoadingCompleted',
+        FRAGMENT_LOADING_PROGRESS: 'fragmentLoadingProgress',
+        FRAGMENT_LOADING_STARTED: 'fragmentLoadingStarted'
       };
 
       function onPlaying () {
@@ -79,6 +83,10 @@ define('bigscreenplayer/playbackstrategy/msestrategy',
         if (event.mediaType === 'video' && event.metric === 'DroppedFrames') {
           DebugTool.keyValue({key: 'Dropped Frames', value: event.value.droppedFrames});
         }
+      }
+
+      function onFragmentEvent (event) {
+        DebugTool.info(JSON.stringify(event));
       }
 
       function publishMediaState (mediaState) {
@@ -137,6 +145,10 @@ define('bigscreenplayer/playbackstrategy/msestrategy',
         mediaPlayer.on(DashJSEvents.MANIFEST_VALIDITY_CHANGED, onManifestValidityChange);
         mediaPlayer.on(DashJSEvents.QUALITY_CHANGE_RENDERED, onQualityChangeRendered);
         mediaPlayer.on(DashJSEvents.METRIC_ADDED, onMetricAdded);
+        mediaPlayer.on(DashJSEvents.FRAGMENT_LOADING_STARTED, onFragmentEvent);
+        mediaPlayer.on(DashJSEvents.FRAGMENT_LOADING_PROGRESS, onFragmentEvent);
+        mediaPlayer.on(DashJSEvents.FRAGMENT_LOADING_COMPLETED, onFragmentEvent);
+        mediaPlayer.on(DashJSEvents.FRAGMENT_LOADING_ABANDONED, onFragmentEvent);
       }
 
       function cdnFailoverLoad (newSrc, currentSrcWithTime) {
@@ -236,6 +248,10 @@ define('bigscreenplayer/playbackstrategy/msestrategy',
           mediaPlayer.off(DashJSEvents.MANIFEST_VALIDITY_CHANGED, onManifestValidityChange);
           mediaPlayer.off(DashJSEvents.QUALITY_CHANGE_RENDERED, onQualityChangeRendered);
           mediaPlayer.off(DashJSEvents.METRIC_ADDED, onMetricAdded);
+          mediaPlayer.off(DashJSEvents.FRAGMENT_LOADING_STARTED, onFragmentEvent);
+          mediaPlayer.off(DashJSEvents.FRAGMENT_LOADING_PROGRESS, onFragmentEvent);
+          mediaPlayer.off(DashJSEvents.FRAGMENT_LOADING_COMPLETED, onFragmentEvent);
+          mediaPlayer.off(DashJSEvents.FRAGMENT_LOADING_ABANDONED, onFragmentEvent);
 
           videoElement.parentElement.removeChild(videoElement);
 
