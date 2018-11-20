@@ -10,6 +10,7 @@ define('bigscreenplayer/playbackstrategy/msestrategy',
   ],
   function (MediaState, WindowTypes, DebugTool, MediaKinds) {
     return function (windowType, mediaKind, timeData, playbackElement) {
+      var initialPlaybackTime;
       var mediaPlayer;
       var eventCallback;
       var errorCallback;
@@ -29,6 +30,8 @@ define('bigscreenplayer/playbackstrategy/msestrategy',
       };
 
       function onPlaying () {
+        var timeToPlayback = Date.now() - initialPlaybackTime;
+        DebugTool.info('Time To Playback: ' + timeToPlayback);
         isEnded = false;
         publishMediaState(MediaState.PLAYING);
       }
@@ -64,6 +67,13 @@ define('bigscreenplayer/playbackstrategy/msestrategy',
 
       function onManifestLoaded (event) {
         DebugTool.info('Manifest loaded. Duration is: ' + event.data.mediaPresentationDuration);
+
+        // TODO: if there was no initial bitrate recorded we should assume the worst?
+        // Could skip this is the recorded bitrate is above the highest representation
+        mediaPlayer.setInitialBitrateFor('video', 0);
+        mediaPlayer.setInitialBitrateFor('audio', 0);
+        mediaPlayer.setInitialRepresentationRatioFor('video', 0);
+        mediaPlayer.setInitialRepresentationRatioFor('audio', 0);
       }
 
       function onManifestValidityChange (event) {
@@ -179,6 +189,8 @@ define('bigscreenplayer/playbackstrategy/msestrategy',
           };
         },
         load: function (src, mimeType, startTime) {
+          initialPlaybackTime = Date.now();
+
           var srcWithTime = startTime ? src + '#t=' + (startTime + timeCorrection) : src;
 
           if (!mediaPlayer) {
