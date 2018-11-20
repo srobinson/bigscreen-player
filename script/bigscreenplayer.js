@@ -101,7 +101,9 @@ define('bigscreenplayer/bigscreenplayer',
           DebugTool.keyValue({key: 'cdn', value: bigscreenPlayerData.media.urls[0].cdn});
           DebugTool.keyValue({key: 'url', value: bigscreenPlayerData.media.urls[0].url});
         },
-
+        preload: function (src) {
+          playerComponent.preload(src);
+        },
         tearDown: function () {
           if (playerComponent) {
             playerComponent.tearDown();

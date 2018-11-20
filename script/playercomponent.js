@@ -46,6 +46,10 @@ define(
 
       initialMediaPlay(bigscreenPlayerData.media, bigscreenPlayerData.initialPlaybackTime);
 
+      function preload (src) {
+        playbackStrategy.preload(src);
+      }
+
       function play () {
         userInteracted = true;
         playbackStrategy.play();
@@ -361,6 +365,7 @@ define(
       }
 
       return {
+        preload: preload,
         play: play,
         pause: pause,
         transitions: transitions,

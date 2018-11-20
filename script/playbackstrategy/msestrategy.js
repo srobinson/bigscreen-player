@@ -11,6 +11,8 @@ define('bigscreenplayer/playbackstrategy/msestrategy',
   function (MediaState, WindowTypes, DebugTool, MediaKinds) {
     return function (windowType, mediaKind, timeData, playbackElement) {
       var initialPlaybackTime;
+      var preloadMediaPlayer;
+      var isPreloadPlayback;
       var mediaPlayer;
       var eventCallback;
       var errorCallback;
@@ -144,6 +146,20 @@ define('bigscreenplayer/playbackstrategy/msestrategy',
         mediaPlayer.initialize(mediaElement, src, true);
       }
 
+      function setUpPreloadMediaPlayer (src) {
+        preloadMediaPlayer = dashjs.MediaPlayer().create();
+        preloadMediaPlayer.getDebug().setLogToBrowserConsole(false);
+
+        preloadMediaPlayer.setBufferToKeep(0);
+        preloadMediaPlayer.setBufferAheadToKeep(20);
+
+        preloadMediaPlayer.setBufferTimeAtTopQuality(12);
+        preloadMediaPlayer.setBufferTimeAtTopQualityLongForm(12);
+
+        preloadMediaPlayer.initialize(null, src, true);
+        preloadMediaPlayer.preload();
+      }
+
       function setUpMediaListeners () {
         mediaElement.addEventListener('timeupdate', onTimeUpdate);
         mediaElement.addEventListener('playing', onPlaying);
@@ -158,6 +174,10 @@ define('bigscreenplayer/playbackstrategy/msestrategy',
         mediaPlayer.on(DashJSEvents.MANIFEST_VALIDITY_CHANGED, onManifestValidityChange);
         mediaPlayer.on(DashJSEvents.QUALITY_CHANGE_RENDERED, onQualityChangeRendered);
         mediaPlayer.on(DashJSEvents.METRIC_ADDED, onMetricAdded);
+      }
+
+      function attachMediaView (view) {
+        mediaPlayer.attachView(view);
       }
 
       function cdnFailoverLoad (newSrc, currentSrcWithTime) {
@@ -188,9 +208,12 @@ define('bigscreenplayer/playbackstrategy/msestrategy',
             newTimeUpdateCallback.call(thisArg);
           };
         },
+        preload: function (src) {
+          isPreloadPlayback = true;
+          setUpPreloadMediaPlayer(src);
+        },
         load: function (src, mimeType, startTime) {
           initialPlaybackTime = Date.now();
-
           var srcWithTime = startTime ? src + '#t=' + (startTime + timeCorrection) : src;
 
           if (!mediaPlayer) {
@@ -218,6 +241,10 @@ define('bigscreenplayer/playbackstrategy/msestrategy',
             setUpMediaElement(playbackElement);
             setUpMediaPlayer(srcWithTime);
             setUpMediaListeners();
+          } else if (isPreloadPlayback) {
+            setUpMediaElement(playbackElement);
+            attachMediaView(mediaElement);
+            isPreloadPlayback = false;
           } else {
             cdnFailoverLoad(src, srcWithTime);
           }
