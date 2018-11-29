@@ -23,14 +23,30 @@ define(
          */
       function Player () {
         var eventCallback;
+        var state = MediaPlayerBase.STATE.EMPTY;
 
-                    /**
+        var sentinelLimits = {
+          pause: {
+            maximumAttempts: 2,
+            successEvent: MediaPlayerBase.EVENT.SENTINEL_PAUSE,
+            failureEvent: MediaPlayerBase.EVENT.SENTINEL_PAUSE_FAILURE,
+            currentAttemptCount: 0
+          },
+          seek: {
+            maximumAttempts: 2,
+            successEvent: MediaPlayerBase.EVENT.SENTINEL_SEEK,
+            failureEvent: MediaPlayerBase.EVENT.SENTINEL_SEEK_FAILURE,
+            currentAttemptCount: 0
+          }
+        };
+
+        /**
              * Protected method, for use by subclasses to emit events of any specified type, adding in the
              * standard payload used by all events.
              * @param {String} eventType The type of the event to be emitted.
              * @param {Object} [eventLabels] Optional additional event labels.
              * @protected
-             */
+        */
         function emitEvent (eventType, eventLabels) {
           var event = {
             type: eventType,
@@ -54,7 +70,6 @@ define(
         }
 
         return {
-
           addEventCallback: function (thisArg, newCallback) {
             eventCallback = function (event) {
               newCallback.call(thisArg, event);
@@ -63,12 +78,6 @@ define(
 
           removeAllEventCallbacks: function removeAllEventCallbacks () {
             eventCallback = undefined;
-          },
-
-          init: function init () {
-            init.base.call(this);
-            this._setSentinelLimits();
-            this._state = MediaPlayerBase.STATE.EMPTY;
           },
 
             /**
@@ -83,16 +92,15 @@ define(
               this._type = mediaType;
               this._source = url;
               this._mimeType = mimeType;
-              var device = RuntimeContext.getDevice();
 
               var idSuffix = 'Video';
-              if (mediaType === MediaPlayer.TYPE.AUDIO || mediaType === MediaPlayer.TYPE.LIVE_AUDIO) {
+              if (mediaType === MediaPlayerBase.TYPE.AUDIO || mediaType === MediaPlayerBase.TYPE.LIVE_AUDIO) {
                 idSuffix = 'Audio';
               }
 
               this._setSeekSentinelTolerance();
 
-              this._mediaElement = device._createElement(idSuffix.toLowerCase(), 'mediaPlayer' + idSuffix);
+              this._mediaElement = document.createElement(idSuffix.toLowerCase(), 'mediaPlayer' + idSuffix);
               this._mediaElement.autoplay = false;
               this._mediaElement.style.position = 'absolute';
               this._mediaElement.style.top = '0px';
@@ -157,7 +165,7 @@ define(
           playFrom: function playFrom (seconds) {
             this._postBufferingState = MediaPlayerBase.STATE.PLAYING;
             this._targetSeekTime = seconds;
-            this._sentinelLimits.seek.currentAttemptCount = 0;
+            sentinelLimits.seek.currentAttemptCount = 0;
 
             switch (this.getState()) {
               case MediaPlayerBase.STATE.PAUSED:
@@ -214,7 +222,7 @@ define(
           beginPlaybackFrom: function beginPlaybackFrom (seconds) {
             this._postBufferingState = MediaPlayerBase.STATE.PLAYING;
             this._targetSeekTime = seconds;
-            this._sentinelLimits.seek.currentAttemptCount = 0;
+            sentinelLimits.seek.currentAttemptCount = 0;
 
             switch (this.getState()) {
               case MediaPlayerBase.STATE.STOPPED:
@@ -239,7 +247,7 @@ define(
                 break;
 
               case MediaPlayerBase.STATE.BUFFERING:
-                this._sentinelLimits.pause.currentAttemptCount = 0;
+                sentinelLimits.pause.currentAttemptCount = 0;
                 if (this._isReadyToPlayFrom()) {
                         // If we are not ready to playFrom, then calling pause would seek to the start of media, which we might not want.
                   this._pauseMediaElement();
@@ -247,7 +255,7 @@ define(
                 break;
 
               case MediaPlayerBase.STATE.PLAYING:
-                this._sentinelLimits.pause.currentAttemptCount = 0;
+                sentinelLimits.pause.currentAttemptCount = 0;
                 this._pauseMediaElement();
                 this._toPaused();
                 break;
@@ -406,7 +414,7 @@ define(
              * @inheritDoc
              */
           getState: function getState () {
-            return this._state;
+            return state;
           },
 
             /**
@@ -459,7 +467,7 @@ define(
 
           _onStatus: function _onStatus () {
             if (this.getState() === MediaPlayerBase.STATE.PLAYING) {
-              emitEvent(MediaPlayer.EVENT.STATUS);
+              emitEvent(MediaPlayerBase.EVENT.STATUS);
             }
           },
 
@@ -576,66 +584,49 @@ define(
 
           _reportError: function _reportError (errorMessage) {
             RuntimeContext.getDevice().getLogger().error(errorMessage);
-            emitEvent(MediaPlayer.EVENT.ERROR, {'errorMessage': errorMessage});
+            emitEvent(MediaPlayerBase.EVENT.ERROR, {'errorMessage': errorMessage});
           },
 
           _toStopped: function _toStopped () {
-            this._state = MediaPlayerBase.STATE.STOPPED;
-            emitEvent(MediaPlayer.EVENT.STOPPED);
+            state = MediaPlayerBase.STATE.STOPPED;
+            emitEvent(MediaPlayerBase.EVENT.STOPPED);
             this._setSentinels([]);
           },
 
           _toBuffering: function _toBuffering () {
-            this._state = MediaPlayerBase.STATE.BUFFERING;
-            emitEvent(MediaPlayer.EVENT.BUFFERING);
+            state = MediaPlayerBase.STATE.BUFFERING;
+            emitEvent(MediaPlayerBase.EVENT.BUFFERING);
             this._setSentinels([ this._exitBufferingSentinel ]);
           },
 
           _toPlaying: function _toPlaying () {
-            this._state = MediaPlayerBase.STATE.PLAYING;
-            emitEvent(MediaPlayer.EVENT.PLAYING);
+            state = MediaPlayerBase.STATE.PLAYING;
+            emitEvent(MediaPlayerBase.EVENT.PLAYING);
             this._setSentinels([ this._endOfMediaSentinel, this._shouldBeSeekedSentinel, this._enterBufferingSentinel ]);
           },
 
           _toPaused: function _toPaused () {
-            this._state = MediaPlayerBase.STATE.PAUSED;
-            emitEvent(MediaPlayer.EVENT.PAUSED);
+            state = MediaPlayerBase.STATE.PAUSED;
+            emitEvent(MediaPlayerBase.EVENT.PAUSED);
             this._setSentinels([ this._shouldBeSeekedSentinel, this._shouldBePausedSentinel ]);
           },
 
           _toComplete: function _toComplete () {
-            this._state = MediaPlayerBase.STATE.COMPLETE;
-            emitEvent(MediaPlayer.EVENT.COMPLETE);
+            state = MediaPlayerBase.STATE.COMPLETE;
+            emitEvent(MediaPlayerBase.EVENT.COMPLETE);
             this._setSentinels([]);
           },
 
           _toEmpty: function _toEmpty () {
             this._wipe();
-            this._state = MediaPlayerBase.STATE.EMPTY;
+            state = MediaPlayerBase.STATE.EMPTY;
           },
 
           _toError: function _toError (errorMessage) {
             this._wipe();
-            this._state = MediaPlayerBase.STATE.ERROR;
+            state = MediaPlayerBase.STATE.ERROR;
             this._reportError(errorMessage);
             throw 'ApiError: ' + errorMessage;
-          },
-
-          _setSentinelLimits: function _setSentinelLimits () {
-            this._sentinelLimits = {
-              pause: {
-                maximumAttempts: 2,
-                successEvent: MediaPlayer.EVENT.SENTINEL_PAUSE,
-                failureEvent: MediaPlayer.EVENT.SENTINEL_PAUSE_FAILURE,
-                currentAttemptCount: 0
-              },
-              seek: {
-                maximumAttempts: 2,
-                successEvent: MediaPlayer.EVENT.SENTINEL_SEEK,
-                failureEvent: MediaPlayer.EVENT.SENTINEL_SEEK_FAILURE,
-                currentAttemptCount: 0
-              }
-            };
           },
 
           _enterBufferingSentinel: function _enterBufferingSentinel () {
@@ -660,7 +651,7 @@ define(
             }
 
             if (sentinelShouldFire) {
-              emitEvent(MediaPlayer.EVENT.SENTINEL_ENTER_BUFFERING);
+              emitEvent(MediaPlayerBase.EVENT.SENTINEL_ENTER_BUFFERING);
               this._toBuffering();
                     /* Resetting the sentinel attempt count to zero means that the sentinel will only fire once
                      even if multiple iterations result in the same conditions.
@@ -677,7 +668,7 @@ define(
 
           _exitBufferingSentinel: function _exitBufferingSentinel () {
             function fireExitBufferingSentinel () {
-              emitEvent(MediaPlayer.EVENT.SENTINEL_EXIT_BUFFERING);
+              emitEvent(MediaPlayerBase.EVENT.SENTINEL_EXIT_BUFFERING);
               this._exitBuffering();
               return true;
             }
@@ -702,7 +693,7 @@ define(
             var sentinelActionTaken = false;
 
             if (Math.abs(currentTime - this._sentinelSeekTime) > this._seekSentinelTolerance) {
-              sentinelActionTaken = this._nextSentinelAttempt(this._sentinelLimits.seek, function () {
+              sentinelActionTaken = this._nextSentinelAttempt(sentinelLimits.seek, function () {
                 self._mediaElement.currentTime = self._sentinelSeekTime;
               });
             } else if (this._sentinelIntervalNumber < 3) {
@@ -718,7 +709,7 @@ define(
             var sentinelActionTaken = false;
             if (this._hasSentinelTimeChangedWithinTolerance) {
               var self = this;
-              sentinelActionTaken = this._nextSentinelAttempt(this._sentinelLimits.pause, function () {
+              sentinelActionTaken = this._nextSentinelAttempt(sentinelLimits.pause, function () {
                 self._pauseMediaElement();
               });
             }
@@ -748,7 +739,7 @@ define(
 
           _endOfMediaSentinel: function _endOfMediaSentinel () {
             if (!this._hasSentinelTimeChangedWithinTolerance && this._nearEndOfMedia) {
-              emitEvent(MediaPlayer.EVENT.SENTINEL_COMPLETE);
+              emitEvent(MediaPlayerBase.EVENT.SENTINEL_COMPLETE);
               this._onEndOfMedia();
               return true;
             }
