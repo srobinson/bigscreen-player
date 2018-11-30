@@ -5,801 +5,838 @@
  */
 
 define(
-    'bigscreenplayer/playbackstrategy/modifiers/html5',
+  'bigscreenplayer/playbackstrategy/modifiers/html5',
   [
     'bigscreenplayer/playbackstrategy/modifiers/mediaplayerbase'
   ],
-    function (MediaPlayerBase) {
-      'use strict';
+  function (MediaPlayerBase) {
+    'use strict';
 
-        /**
-         * Main MediaPlayer implementation for HTML5 devices.
-         * Use this device modifier if a device implements the HTML5 media playback standard.
-         * It must support creation of &lt;video&gt; and &lt;audio&gt; elements, and those objects must expose an
-         * API in accordance with the HTML5 media specification.
-         * @name antie.devices.mediaplayer.HTML5
-         * @class
-         * @extends antie.devices.mediaplayer.MediaPlayer
-         */
-      function Player () {
-        var eventCallback;
-        var state = MediaPlayerBase.STATE.EMPTY;
+    /**
+     * Main MediaPlayer implementation for HTML5 devices.
+     * Use this device modifier if a device implements the HTML5 media playback standard.
+     * It must support creation of &lt;video&gt; and &lt;audio&gt; elements, and those objects must expose an
+     * API in accordance with the HTML5 media specification.
+     * @name antie.devices.mediaplayer.HTML5
+     * @class
+     * @extends antie.devices.mediaplayer.MediaPlayer
+     */
+    function Player () {
+      var eventCallback;
+      var state = MediaPlayerBase.STATE.EMPTY;
 
-        var sentinelLimits = {
-          pause: {
-            maximumAttempts: 2,
-            successEvent: MediaPlayerBase.EVENT.SENTINEL_PAUSE,
-            failureEvent: MediaPlayerBase.EVENT.SENTINEL_PAUSE_FAILURE,
-            currentAttemptCount: 0
-          },
-          seek: {
-            maximumAttempts: 2,
-            successEvent: MediaPlayerBase.EVENT.SENTINEL_SEEK,
-            failureEvent: MediaPlayerBase.EVENT.SENTINEL_SEEK_FAILURE,
-            currentAttemptCount: 0
-          }
+      var mediaElement;
+      var sourceElement;
+
+      var trustZeroes = false;
+      var ignoreNextPauseEvent = false;
+      var nearEndOfMedia;
+      var readyToPlayFrom;
+
+      var mediaType;
+      var source;
+      var mimeType;
+
+      var postBufferingState;
+      var targetSeekTime;
+
+      var disableSentinels;
+      var hasSentinelTimeChangedWithinTolerance;
+      var enterBufferingSentinelAttemptCount;
+      var sentinelSeekTime;
+      var seekSentinelTolerance;
+      var sentinelInterval;
+      var sentinelIntervalNumber;
+      var lastSentinelTime;
+
+      var sentinelLimits = {
+        pause: {
+          maximumAttempts: 2,
+          successEvent: MediaPlayerBase.EVENT.SENTINEL_PAUSE,
+          failureEvent: MediaPlayerBase.EVENT.SENTINEL_PAUSE_FAILURE,
+          currentAttemptCount: 0
+        },
+        seek: {
+          maximumAttempts: 2,
+          successEvent: MediaPlayerBase.EVENT.SENTINEL_SEEK,
+          failureEvent: MediaPlayerBase.EVENT.SENTINEL_SEEK_FAILURE,
+          currentAttemptCount: 0
+        }
+      };
+
+      function emitEvent (eventType, eventLabels) {
+        var event = {
+          type: eventType,
+          currentTime: getCurrentTime(),
+          seekableRange: getSeekableRange(),
+          duration: getDuration(),
+          url: getSource(),
+          mimeType: getMimeType(),
+          state: getState()
         };
 
-        /**
-             * Protected method, for use by subclasses to emit events of any specified type, adding in the
-             * standard payload used by all events.
-             * @param {String} eventType The type of the event to be emitted.
-             * @param {Object} [eventLabels] Optional additional event labels.
-             * @protected
-        */
-        function emitEvent (eventType, eventLabels) {
-          var event = {
-            type: eventType,
-            currentTime: this.getCurrentTime(),
-            seekableRange: this.getSeekableRange(),
-            duration: this.getDuration(),
-            url: this.getSource(),
-            mimeType: this.getMimeType(),
-            state: this.getState()
-          };
-
-          if (eventLabels) {
-            for (var key in eventLabels) {
-              if (eventLabels.hasOwnProperty(key)) {
-                event[key] = eventLabels[key];
-              }
+        if (eventLabels) {
+          for (var key in eventLabels) {
+            if (eventLabels.hasOwnProperty(key)) {
+              event[key] = eventLabels[key];
             }
           }
-
-          eventCallback(event);
         }
 
-        return {
-          addEventCallback: function (thisArg, newCallback) {
-            eventCallback = function (event) {
-              newCallback.call(thisArg, event);
-            };
-          },
-
-          removeAllEventCallbacks: function removeAllEventCallbacks () {
-            eventCallback = undefined;
-          },
-
-            /**
-             * @inheritDoc
-             */
-          initialiseMedia: function initialiseMedia (mediaType, url, mimeType, sourceContainer, opts) {
-            opts = opts || {};
-            if (this.getState() === MediaPlayerBase.STATE.EMPTY) {
-              this._disableSentinels = opts.disableSentinels;
-              this._trustZeroes = false;
-              this._ignoreNextPauseEvent = false;
-              this._type = mediaType;
-              this._source = url;
-              this._mimeType = mimeType;
-
-              var idSuffix = 'Video';
-              if (mediaType === MediaPlayerBase.TYPE.AUDIO || mediaType === MediaPlayerBase.TYPE.LIVE_AUDIO) {
-                idSuffix = 'Audio';
-              }
-
-              this._setSeekSentinelTolerance();
-
-              this._mediaElement = document.createElement(idSuffix.toLowerCase(), 'mediaPlayer' + idSuffix);
-              this._mediaElement.autoplay = false;
-              this._mediaElement.style.position = 'absolute';
-              this._mediaElement.style.top = '0px';
-              this._mediaElement.style.left = '0px';
-              this._mediaElement.style.width = '100%';
-              this._mediaElement.style.height = '100%';
-
-              var self = this;
-              this._wrapOnFinishedBuffering = function () {
-                self._onFinishedBuffering();
-              };
-              this._wrapOnError = function () {
-                self._onDeviceError();
-              };
-              this._wrapOnEndOfMedia = function () {
-                self._onEndOfMedia();
-              };
-              this._wrapOnDeviceBuffering = function () {
-                self._onDeviceBuffering();
-              };
-              this._wrapOnStatus = function () {
-                self._onStatus();
-              };
-              this._wrapOnMetadata = function () {
-                self._onMetadata();
-              };
-              this._wrapOnSourceError = function () {
-                self._onSourceError();
-              };
-              this._wrapOnPause = function () {
-                self._onPause();
-              };
-              this._mediaElement.addEventListener('canplay', this._wrapOnFinishedBuffering, false);
-              this._mediaElement.addEventListener('seeked', this._wrapOnFinishedBuffering, false);
-              this._mediaElement.addEventListener('playing', this._wrapOnFinishedBuffering, false);
-              this._mediaElement.addEventListener('error', this._wrapOnError, false);
-              this._mediaElement.addEventListener('ended', this._wrapOnEndOfMedia, false);
-              this._mediaElement.addEventListener('waiting', this._wrapOnDeviceBuffering, false);
-              this._mediaElement.addEventListener('timeupdate', this._wrapOnStatus, false);
-              this._mediaElement.addEventListener('loadedmetadata', this._wrapOnMetadata, false);
-              this._mediaElement.addEventListener('pause', this._wrapOnPause, false);
-
-              device.prependChildElement(sourceContainer, this._mediaElement);
-
-              this._sourceElement = this._generateSourceElement(url, mimeType);
-              this._sourceElement.addEventListener('error', this._wrapOnSourceError, false);
-
-              this._mediaElement.preload = 'auto';
-              device.appendChildElement(this._mediaElement, this._sourceElement);
-
-              this._mediaElement.load();
-
-              this._toStopped();
-            } else {
-              this._toError('Cannot set source unless in the \'' + MediaPlayerBase.STATE.EMPTY + '\' state');
-            }
-          },
-
-            /**
-             * @inheritDoc
-             */
-          playFrom: function playFrom (seconds) {
-            this._postBufferingState = MediaPlayerBase.STATE.PLAYING;
-            this._targetSeekTime = seconds;
-            sentinelLimits.seek.currentAttemptCount = 0;
-
-            switch (this.getState()) {
-              case MediaPlayerBase.STATE.PAUSED:
-              case MediaPlayerBase.STATE.COMPLETE:
-                this._trustZeroes = true;
-                this._toBuffering();
-                this._playFromIfReady();
-                break;
-
-              case MediaPlayerBase.STATE.BUFFERING:
-                this._playFromIfReady();
-                break;
-
-              case MediaPlayerBase.STATE.PLAYING:
-                this._trustZeroes = true;
-                this._toBuffering();
-                this._targetSeekTime = this._getClampedTimeForPlayFrom(seconds);
-                if (this._isNearToCurrentTime(this._targetSeekTime)) {
-                  this._targetSeekTime = undefined;
-                  this._toPlaying();
-                } else {
-                  this._playFromIfReady();
-                }
-                break;
-
-              default:
-                this._toError('Cannot playFrom while in the \'' + this.getState() + '\' state');
-                break;
-            }
-          },
-
-            /**
-             * @inheritDoc
-             */
-          beginPlayback: function beginPlayback () {
-            this._postBufferingState = MediaPlayerBase.STATE.PLAYING;
-            this._sentinelSeekTime = undefined;
-            switch (this.getState()) {
-              case MediaPlayerBase.STATE.STOPPED:
-                this._trustZeroes = true;
-                this._toBuffering();
-                this._mediaElement.play();
-                break;
-
-              default:
-                this._toError('Cannot beginPlayback while in the \'' + this.getState() + '\' state');
-                break;
-            }
-          },
-
-            /**
-             * @inheritDoc
-             */
-          beginPlaybackFrom: function beginPlaybackFrom (seconds) {
-            this._postBufferingState = MediaPlayerBase.STATE.PLAYING;
-            this._targetSeekTime = seconds;
-            sentinelLimits.seek.currentAttemptCount = 0;
-
-            switch (this.getState()) {
-              case MediaPlayerBase.STATE.STOPPED:
-                this._trustZeroes = true;
-                this._toBuffering();
-                this._playFromIfReady();
-                break;
-
-              default:
-                this._toError('Cannot beginPlaybackFrom while in the \'' + this.getState() + '\' state');
-                break;
-            }
-          },
-
-            /**
-             * @inheritDoc
-             */
-          pause: function pause () {
-            this._postBufferingState = MediaPlayerBase.STATE.PAUSED;
-            switch (this.getState()) {
-              case MediaPlayerBase.STATE.PAUSED:
-                break;
-
-              case MediaPlayerBase.STATE.BUFFERING:
-                sentinelLimits.pause.currentAttemptCount = 0;
-                if (this._isReadyToPlayFrom()) {
-                        // If we are not ready to playFrom, then calling pause would seek to the start of media, which we might not want.
-                  this._pauseMediaElement();
-                }
-                break;
-
-              case MediaPlayerBase.STATE.PLAYING:
-                sentinelLimits.pause.currentAttemptCount = 0;
-                this._pauseMediaElement();
-                this._toPaused();
-                break;
-
-              default:
-                this._toError('Cannot pause while in the \'' + this.getState() + '\' state');
-                break;
-            }
-          },
-
-            /**
-             * @inheritDoc
-             */
-          resume: function () {
-            this._postBufferingState = MediaPlayerBase.STATE.PLAYING;
-            switch (this.getState()) {
-              case MediaPlayerBase.STATE.PLAYING:
-                break;
-
-              case MediaPlayerBase.STATE.BUFFERING:
-                if (this._isReadyToPlayFrom()) {
-                        // If we are not ready to playFrom, then calling play would seek to the start of media, which we might not want.
-                  this._mediaElement.play();
-                }
-                break;
-
-              case MediaPlayerBase.STATE.PAUSED:
-                this._mediaElement.play();
-                this._toPlaying();
-                break;
-
-              default:
-                this._toError('Cannot resume while in the \'' + this.getState() + '\' state');
-                break;
-            }
-          },
-
-            /**
-             * @inheritDoc
-             */
-          stop: function stop () {
-            switch (this.getState()) {
-              case MediaPlayerBase.STATE.STOPPED:
-                break;
-
-              case MediaPlayerBase.STATE.BUFFERING:
-              case MediaPlayerBase.STATE.PLAYING:
-              case MediaPlayerBase.STATE.PAUSED:
-              case MediaPlayerBase.STATE.COMPLETE:
-                this._pauseMediaElement();
-                this._toStopped();
-                break;
-
-              default:
-                this._toError('Cannot stop while in the \'' + this.getState() + '\' state');
-                break;
-            }
-          },
-
-            /**
-             * @inheritDoc
-             */
-          reset: function reset () {
-            switch (this.getState()) {
-              case MediaPlayerBase.STATE.EMPTY:
-                break;
-
-              case MediaPlayerBase.STATE.STOPPED:
-              case MediaPlayerBase.STATE.ERROR:
-                this._toEmpty();
-                break;
-
-              default:
-                this._toError('Cannot reset while in the \'' + this.getState() + '\' state');
-                break;
-            }
-          },
-
-            /**
-             * @inheritDoc
-             */
-          getSource: function getSource () {
-            return this._source;
-          },
-
-            /**
-             * @inheritDoc
-             */
-          getMimeType: function getMimeType () {
-            return this._mimeType;
-          },
-
-            /**
-             * @inheritDoc
-             */
-          getCurrentTime: function getCurrentTime () {
-            switch (this.getState()) {
-              case MediaPlayerBase.STATE.STOPPED:
-              case MediaPlayerBase.STATE.ERROR:
-                break;
-
-              default:
-                if (this._mediaElement) {
-                  return this._mediaElement.currentTime;
-                }
-                break;
-            }
-            return undefined;
-          },
-
-            /**
-             * @inheritDoc
-             */
-          getSeekableRange: function getSeekableRange () {
-            switch (this.getState()) {
-              case MediaPlayerBase.STATE.STOPPED:
-              case MediaPlayerBase.STATE.ERROR:
-                break;
-
-              default:
-                return this._getSeekableRange();
-            }
-            return undefined;
-          },
-
-            /**
-             * @inheritDoc
-             */
-          _getMediaDuration: function _getMediaDuration () {
-            if (this._mediaElement && this._isReadyToPlayFrom()) {
-              return this._mediaElement.duration;
-            }
-            return undefined;
-          },
-
-          _getSeekableRange: function _getSeekableRange () {
-            if (this._mediaElement) {
-              if (this._isReadyToPlayFrom() && this._mediaElement.seekable && this._mediaElement.seekable.length > 0) {
-                return {
-                  start: this._mediaElement.seekable.start(0),
-                  end: this._mediaElement.seekable.end(0)
-                };
-              } else if (this._mediaElement.duration !== undefined) {
-                return {
-                  start: 0,
-                  end: this._mediaElement.duration
-                };
-              } else {
-                RuntimeContext.getDevice().getLogger().warn('No \'duration\' or \'seekable\' on media element');
-              }
-            }
-            return undefined;
-          },
-
-            /**
-             * @inheritDoc
-             */
-          getState: function getState () {
-            return state;
-          },
-
-            /**
-             * @inheritDoc
-             */
-          getPlayerElement: function getPlayerElement () {
-            return this._mediaElement;
-          },
-
-          _onFinishedBuffering: function _onFinishedBuffering () {
-            this._exitBuffering();
-          },
-
-          _pauseMediaElement: function _pauseMediaElement () {
-            this._mediaElement.pause();
-            this._ignoreNextPauseEvent = true;
-          },
-
-          _onPause: function _onPause () {
-            if (this._ignoreNextPauseEvent) {
-              this._ignoreNextPauseEvent = false;
-              return;
-            }
-
-            if (this.getState() !== MediaPlayerBase.STATE.PAUSED) {
-              this._toPaused();
-            }
-          },
-
-          _onDeviceError: function _onDeviceError () {
-            this._reportError('Media element error code: ' + this._mediaElement.error.code);
-          },
-
-          _onSourceError: function _onSourceError () {
-            this._reportError('Media source element error');
-          },
-
-            /**
-             * @protected
-             */
-          _onDeviceBuffering: function _onDeviceBuffering () {
-            if (this.getState() === MediaPlayerBase.STATE.PLAYING) {
-              this._toBuffering();
-            }
-          },
-
-          _onEndOfMedia: function _onEndOfMedia () {
-            this._toComplete();
-          },
-
-          _onStatus: function _onStatus () {
-            if (this.getState() === MediaPlayerBase.STATE.PLAYING) {
-              emitEvent(MediaPlayerBase.EVENT.STATUS);
-            }
-          },
-
-          _onMetadata: function _onMetadata () {
-            this._metadataLoaded();
-          },
-
-          _exitBuffering: function _exitBuffering () {
-            this._metadataLoaded();
-            if (this.getState() !== MediaPlayerBase.STATE.BUFFERING) {
-              return;
-            } else if (this._postBufferingState === MediaPlayerBase.STATE.PAUSED) {
-              this._toPaused();
-            } else {
-              this._toPlaying();
-            }
-          },
-
-          _metadataLoaded: function _metadataLoaded () {
-            this._readyToPlayFrom = true;
-            if (this._waitingToPlayFrom()) {
-              this._deferredPlayFrom();
-            }
-          },
-
-          _playFromIfReady: function _playFromIfReady () {
-            if (this._isReadyToPlayFrom()) {
-              if (this._waitingToPlayFrom()) {
-                this._deferredPlayFrom();
-              }
-            }
-          },
-
-          _waitingToPlayFrom: function _waitingToPlayFrom () {
-            return this._targetSeekTime !== undefined;
-          },
-
-          _deferredPlayFrom: function _deferredPlayFrom () {
-            this._seekTo(this._targetSeekTime);
-            this._mediaElement.play();
-            if (this._postBufferingState === MediaPlayerBase.STATE.PAUSED) {
-              this._pauseMediaElement();
-            }
-            this._targetSeekTime = undefined;
-          },
-
-          _seekTo: function _seekTo (seconds) {
-            var clampedTime = this._getClampedTimeForPlayFrom(seconds);
-            this._mediaElement.currentTime = clampedTime;
-            this._sentinelSeekTime = clampedTime;
-          },
-
-          _getClampedTimeForPlayFrom: function _getClampedTimeForPlayFrom (seconds) {
-            var clampedTime = this._getClampedTime(seconds);
-            if (clampedTime !== seconds) {
-              var range = this._getSeekableRange();
-              RuntimeContext.getDevice().getLogger().debug('playFrom ' + seconds + ' clamped to ' + clampedTime + ' - seekable range is { start: ' + range.start + ', end: ' + range.end + ' }');
-            }
-            return clampedTime;
-          },
-
-          _wipe: function _wipe () {
-            this._type = undefined;
-            this._source = undefined;
-            this._mimeType = undefined;
-            this._targetSeekTime = undefined;
-            this._sentinelSeekTime = undefined;
-            this._clearSentinels();
-            this._destroyMediaElement();
-            this._readyToPlayFrom = false;
-          },
-
-          _destroyMediaElement: function _destroyMediaElement () {
-            if (this._mediaElement) {
-              this._mediaElement.removeEventListener('canplay', this._wrapOnFinishedBuffering, false);
-              this._mediaElement.removeEventListener('seeked', this._wrapOnFinishedBuffering, false);
-              this._mediaElement.removeEventListener('playing', this._wrapOnFinishedBuffering, false);
-              this._mediaElement.removeEventListener('error', this._wrapOnError, false);
-              this._mediaElement.removeEventListener('ended', this._wrapOnEndOfMedia, false);
-              this._mediaElement.removeEventListener('waiting', this._wrapOnDeviceBuffering, false);
-              this._mediaElement.removeEventListener('timeupdate', this._wrapOnStatus, false);
-              this._mediaElement.removeEventListener('loadedmetadata', this._wrapOnMetadata, false);
-              this._mediaElement.removeEventListener('pause', this._wrapOnPause, false);
-              this._sourceElement.removeEventListener('error', this._wrapOnSourceError, false);
-
-              var device = RuntimeContext.getDevice();
-              device.removeElement(this._sourceElement);
-
-              this._unloadMediaSrc();
-
-              device.removeElement(this._mediaElement);
-              delete this._mediaElement;
-              delete this._sourceElement;
-            }
-          },
-
-          _unloadMediaSrc: function _unloadMediaSrc () {
-                // Reset source as advised by HTML5 video spec, section 4.8.10.15:
-                // http://www.w3.org/TR/2011/WD-html5-20110405/video.html#best-practices-for-authors-using-media-elements
-            this._mediaElement.removeAttribute('src');
-            this._mediaElement.load();
-          },
-
-            /**
-             * @protected
-             */
-          _generateSourceElement: function _generateSourceElement (url, mimeType) {
-            var device = RuntimeContext.getDevice();
-            var sourceElement = device._createElement('source');
-            sourceElement.src = url;
-            sourceElement.type = mimeType;
-            return sourceElement;
-          },
-
-          _reportError: function _reportError (errorMessage) {
-            RuntimeContext.getDevice().getLogger().error(errorMessage);
-            emitEvent(MediaPlayerBase.EVENT.ERROR, {'errorMessage': errorMessage});
-          },
-
-          _toStopped: function _toStopped () {
-            state = MediaPlayerBase.STATE.STOPPED;
-            emitEvent(MediaPlayerBase.EVENT.STOPPED);
-            this._setSentinels([]);
-          },
-
-          _toBuffering: function _toBuffering () {
-            state = MediaPlayerBase.STATE.BUFFERING;
-            emitEvent(MediaPlayerBase.EVENT.BUFFERING);
-            this._setSentinels([ this._exitBufferingSentinel ]);
-          },
-
-          _toPlaying: function _toPlaying () {
-            state = MediaPlayerBase.STATE.PLAYING;
-            emitEvent(MediaPlayerBase.EVENT.PLAYING);
-            this._setSentinels([ this._endOfMediaSentinel, this._shouldBeSeekedSentinel, this._enterBufferingSentinel ]);
-          },
-
-          _toPaused: function _toPaused () {
-            state = MediaPlayerBase.STATE.PAUSED;
-            emitEvent(MediaPlayerBase.EVENT.PAUSED);
-            this._setSentinels([ this._shouldBeSeekedSentinel, this._shouldBePausedSentinel ]);
-          },
-
-          _toComplete: function _toComplete () {
-            state = MediaPlayerBase.STATE.COMPLETE;
-            emitEvent(MediaPlayerBase.EVENT.COMPLETE);
-            this._setSentinels([]);
-          },
-
-          _toEmpty: function _toEmpty () {
-            this._wipe();
-            state = MediaPlayerBase.STATE.EMPTY;
-          },
-
-          _toError: function _toError (errorMessage) {
-            this._wipe();
-            state = MediaPlayerBase.STATE.ERROR;
-            this._reportError(errorMessage);
-            throw 'ApiError: ' + errorMessage;
-          },
-
-          _enterBufferingSentinel: function _enterBufferingSentinel () {
-            var sentinelShouldFire = !this._hasSentinelTimeChangedWithinTolerance && !this._nearEndOfMedia;
-
-            if (this.getCurrentTime() === 0) {
-              sentinelShouldFire = this._trustZeroes && sentinelShouldFire;
-            }
-
-            if (this._enterBufferingSentinelAttemptCount === undefined) {
-              this._enterBufferingSentinelAttemptCount = 0;
-            }
-
-            if (sentinelShouldFire) {
-              this._enterBufferingSentinelAttemptCount++;
-            } else {
-              this._enterBufferingSentinelAttemptCount = 0;
-            }
-
-            if (this._enterBufferingSentinelAttemptCount === 1) {
-              sentinelShouldFire = false;
-            }
-
-            if (sentinelShouldFire) {
-              emitEvent(MediaPlayerBase.EVENT.SENTINEL_ENTER_BUFFERING);
-              this._toBuffering();
-                    /* Resetting the sentinel attempt count to zero means that the sentinel will only fire once
-                     even if multiple iterations result in the same conditions.
-                     This should not be needed as the second iteration, when the enter buffering sentinel is fired
-                     will cause the media player to go into the buffering state. The enter buffering sentinel is not fired
-                     when in buffering state
-                     */
-              this._enterBufferingSentinelAttemptCount = 0;
-              return true;
-            }
-
-            return false;
-          },
-
-          _exitBufferingSentinel: function _exitBufferingSentinel () {
-            function fireExitBufferingSentinel () {
-              emitEvent(MediaPlayerBase.EVENT.SENTINEL_EXIT_BUFFERING);
-              this._exitBuffering();
-              return true;
-            }
-
-            if (this._readyToPlayFrom && this._mediaElement.paused) {
-              return fireExitBufferingSentinel();
-            }
-
-            if (this._hasSentinelTimeChangedWithinTolerance) {
-              return fireExitBufferingSentinel();
-            }
-            return false;
-          },
-
-          _shouldBeSeekedSentinel: function _shouldBeSeekedSentinel () {
-            if (this._sentinelSeekTime === undefined) {
-              return false;
-            }
-
-            var self = this;
-            var currentTime = this.getCurrentTime();
-            var sentinelActionTaken = false;
-
-            if (Math.abs(currentTime - this._sentinelSeekTime) > this._seekSentinelTolerance) {
-              sentinelActionTaken = this._nextSentinelAttempt(sentinelLimits.seek, function () {
-                self._mediaElement.currentTime = self._sentinelSeekTime;
-              });
-            } else if (this._sentinelIntervalNumber < 3) {
-              this._sentinelSeekTime = currentTime;
-            } else {
-              this._sentinelSeekTime = undefined;
-            }
-
-            return sentinelActionTaken;
-          },
-
-          _shouldBePausedSentinel: function _shouldBePausedSentinel () {
-            var sentinelActionTaken = false;
-            if (this._hasSentinelTimeChangedWithinTolerance) {
-              var self = this;
-              sentinelActionTaken = this._nextSentinelAttempt(sentinelLimits.pause, function () {
-                self._pauseMediaElement();
-              });
-            }
-
-            return sentinelActionTaken;
-          },
-
-          _nextSentinelAttempt: function _nextSentinelAttempt (sentinelInfo, attemptFn) {
-            var currentAttemptCount, maxAttemptCount;
-
-            sentinelInfo.currentAttemptCount += 1;
-            currentAttemptCount = sentinelInfo.currentAttemptCount;
-            maxAttemptCount = sentinelInfo.maximumAttempts;
-
-            if (currentAttemptCount === maxAttemptCount + 1) {
-              emitEvent(sentinelInfo.failureEvent);
-            }
-
-            if (currentAttemptCount <= maxAttemptCount) {
-              attemptFn();
-              emitEvent(sentinelInfo.successEvent);
-              return true;
-            }
-
-            return false;
-          },
-
-          _endOfMediaSentinel: function _endOfMediaSentinel () {
-            if (!this._hasSentinelTimeChangedWithinTolerance && this._nearEndOfMedia) {
-              emitEvent(MediaPlayerBase.EVENT.SENTINEL_COMPLETE);
-              this._onEndOfMedia();
-              return true;
-            }
-            return false;
-          },
-
-          _clearSentinels: function _clearSentinels () {
-            clearInterval(this._sentinelInterval);
-          },
-
-          _setSentinels: function _setSentinels (sentinels) {
-            if (this._disableSentinels) {
-              return;
-            }
-
-            var self = this;
-            this._clearSentinels();
-            this._sentinelIntervalNumber = 0;
-            this._lastSentinelTime = this.getCurrentTime();
-            this._sentinelInterval = setInterval(function () {
-              self._sentinelIntervalNumber += 1;
-              var newTime = self.getCurrentTime();
-
-              self._hasSentinelTimeChangedWithinTolerance = (Math.abs(newTime - self._lastSentinelTime) > 0.2);
-              self._nearEndOfMedia = (self.getDuration() - (newTime || self._lastSentinelTime)) <= 1;
-              self._lastSentinelTime = newTime;
-
-              for (var i = 0; i < sentinels.length; i++) {
-                var sentinelActivated = sentinels[i].call(self);
-
-                if (self.getCurrentTime() > 0) {
-                  self._trustZeroes = false;
-                }
-
-                if (sentinelActivated) {
-                  break;
-                }
-              }
-            }, 1100);
-          },
-
-          _isReadyToPlayFrom: function _isReadyToPlayFrom () {
-            if (this._readyToPlayFrom !== undefined) {
-              return this._readyToPlayFrom;
-            }
-            return false;
-          },
-
-          _setSeekSentinelTolerance: function _setSeekSentinelTolerance () {
-            var ON_DEMAND_SEEK_SENTINEL_TOLERANCE = 15;
-            var LIVE_SEEK_SENTINEL_TOLERANCE = 30;
-
-            this._seekSentinelTolerance = ON_DEMAND_SEEK_SENTINEL_TOLERANCE;
-            if (this._isLiveMedia()) {
-              this._seekSentinelTolerance = LIVE_SEEK_SENTINEL_TOLERANCE;
-            }
-          }
-        };
+        eventCallback(event);
       }
 
-      return Player;
+      function getDuration () {
+        switch (getState()) {
+          case MediaPlayerBase.STATE.STOPPED:
+          case MediaPlayerBase.STATE.ERROR:
+            return undefined;
+          default:
+            if (isLiveMedia()) {
+              return Infinity;
+            }
+            return getMediaDuration();
+        }
+      }
+
+      function getSource () {
+        return source;
+      }
+
+      function getMimeType () {
+        return mimeType;
+      }
+
+      function getState () {
+        return state;
+      }
+
+      function isLiveMedia () {
+        return (mediaType === MediaPlayerBase.TYPE.LIVE_VIDEO) || (mediaType === MediaPlayerBase.TYPE.LIVE_AUDIO);
+      }
+
+      function setSeekSentinelTolerance () {
+        var ON_DEMAND_SEEK_SENTINEL_TOLERANCE = 15;
+        var LIVE_SEEK_SENTINEL_TOLERANCE = 30;
+
+        seekSentinelTolerance = ON_DEMAND_SEEK_SENTINEL_TOLERANCE;
+        if (isLiveMedia()) {
+          seekSentinelTolerance = LIVE_SEEK_SENTINEL_TOLERANCE;
+        }
+      }
+
+      function generateSourceElement (url, mimeType) {
+        var sourceElement = document.createElement('source');
+        sourceElement.src = url;
+        sourceElement.type = mimeType;
+        return sourceElement;
+      }
+
+      function appendChildElement (to, el) {
+        to.appendChild(el);
+      }
+
+      function prependChildElement (to, el) {
+        if (to.childNodes.length > 0) {
+          to.insertBefore(el, to.childNodes[0]);
+        } else {
+          to.appendChild(el);
+        }
+      }
+
+      function removeElement (el) {
+        if (el.parentNode) {
+          el.parentNode.removeChild(el);
+        }
+      }
+
+      function toStopped () {
+        state = MediaPlayerBase.STATE.STOPPED;
+        emitEvent(MediaPlayerBase.EVENT.STOPPED);
+        setSentinels([]);
+      }
+
+      function enterBufferingSentinel () {
+        var sentinelShouldFire = !hasSentinelTimeChangedWithinTolerance && !nearEndOfMedia;
+
+        if (getCurrentTime() === 0) {
+          sentinelShouldFire = trustZeroes && sentinelShouldFire;
+        }
+
+        if (enterBufferingSentinelAttemptCount === undefined) {
+          enterBufferingSentinelAttemptCount = 0;
+        }
+
+        if (sentinelShouldFire) {
+          enterBufferingSentinelAttemptCount++;
+        } else {
+          enterBufferingSentinelAttemptCount = 0;
+        }
+
+        if (enterBufferingSentinelAttemptCount === 1) {
+          sentinelShouldFire = false;
+        }
+
+        if (sentinelShouldFire) {
+          emitEvent(MediaPlayerBase.EVENT.SENTINEL_ENTER_BUFFERING);
+          toBuffering();
+          /* Resetting the sentinel attempt count to zero means that the sentinel will only fire once
+           even if multiple iterations result in the same conditions.
+           This should not be needed as the second iteration, when the enter buffering sentinel is fired
+           will cause the media player to go into the buffering state. The enter buffering sentinel is not fired
+           when in buffering state
+           */
+          enterBufferingSentinelAttemptCount = 0;
+          return true;
+        }
+
+        return false;
+      }
+
+      function exitBufferingSentinel () {
+        function fireExitBufferingSentinel () {
+          emitEvent(MediaPlayerBase.EVENT.SENTINEL_EXIT_BUFFERING);
+          exitBuffering();
+          return true;
+        }
+
+        if (readyToPlayFrom && mediaElement.paused) {
+          return fireExitBufferingSentinel();
+        }
+
+        if (hasSentinelTimeChangedWithinTolerance) {
+          return fireExitBufferingSentinel();
+        }
+        return false;
+      }
+
+      function shouldBeSeekedSentinel () {
+        if (sentinelSeekTime === undefined) {
+          return false;
+        }
+
+        var currentTime = getCurrentTime();
+        var sentinelActionTaken = false;
+
+        if (Math.abs(currentTime - sentinelSeekTime) > seekSentinelTolerance) {
+          sentinelActionTaken = nextSentinelAttempt(sentinelLimits.seek, function () {
+            mediaElement.currentTime = sentinelSeekTime;
+          });
+        } else if (sentinelIntervalNumber < 3) {
+          sentinelSeekTime = currentTime;
+        } else {
+          sentinelSeekTime = undefined;
+        }
+
+        return sentinelActionTaken;
+      }
+
+      function shouldBePausedSentinel () {
+        var sentinelActionTaken = false;
+        if (hasSentinelTimeChangedWithinTolerance) {
+          sentinelActionTaken = nextSentinelAttempt(sentinelLimits.pause, function () {
+            pauseMediaElement();
+          });
+        }
+
+        return sentinelActionTaken;
+      }
+
+      function nextSentinelAttempt (sentinelInfo, attemptFn) {
+        var currentAttemptCount, maxAttemptCount;
+
+        sentinelInfo.currentAttemptCount += 1;
+        currentAttemptCount = sentinelInfo.currentAttemptCount;
+        maxAttemptCount = sentinelInfo.maximumAttempts;
+
+        if (currentAttemptCount === maxAttemptCount + 1) {
+          emitEvent(sentinelInfo.failureEvent);
+        }
+
+        if (currentAttemptCount <= maxAttemptCount) {
+          attemptFn();
+          emitEvent(sentinelInfo.successEvent);
+          return true;
+        }
+
+        return false;
+      }
+
+      function endOfMediaSentinel () {
+        if (!hasSentinelTimeChangedWithinTolerance && nearEndOfMedia) {
+          emitEvent(MediaPlayerBase.EVENT.SENTINEL_COMPLETE);
+          onEndOfMedia();
+          return true;
+        }
+        return false;
+      }
+
+      function clearSentinels () {
+        clearInterval(sentinelInterval);
+      }
+
+      function setSentinels (sentinels) {
+        if (disableSentinels) {
+          return;
+        }
+
+        clearSentinels();
+        sentinelIntervalNumber = 0;
+        lastSentinelTime = getCurrentTime();
+        sentinelInterval = setInterval(function () {
+          sentinelIntervalNumber += 1;
+          var newTime = getCurrentTime();
+
+          hasSentinelTimeChangedWithinTolerance = (Math.abs(newTime - lastSentinelTime) > 0.2);
+          nearEndOfMedia = (getDuration() - (newTime || lastSentinelTime)) <= 1;
+          lastSentinelTime = newTime;
+
+          for (var i = 0; i < sentinels.length; i++) {
+            var sentinelActivated = sentinels[i].call();
+
+            if (getCurrentTime() > 0) {
+              trustZeroes = false;
+            }
+
+            if (sentinelActivated) {
+              break;
+            }
+          }
+        }, 1100);
+      }
+
+      function reportError (errorMessage) {
+        RuntimeContext.getDevice().getLogger().error(errorMessage);
+        emitEvent(MediaPlayerBase.EVENT.ERROR, { 'errorMessage': errorMessage });
+      }
+
+      function toBuffering () {
+        state = MediaPlayerBase.STATE.BUFFERING;
+        emitEvent(MediaPlayerBase.EVENT.BUFFERING);
+        setSentinels([exitBufferingSentinel]);
+      }
+
+      function toPlaying () {
+        state = MediaPlayerBase.STATE.PLAYING;
+        emitEvent(MediaPlayerBase.EVENT.PLAYING);
+        setSentinels([endOfMediaSentinel, shouldBeSeekedSentinel, enterBufferingSentinel]);
+      }
+
+      function toPaused () {
+        state = MediaPlayerBase.STATE.PAUSED;
+        emitEvent(MediaPlayerBase.EVENT.PAUSED);
+        setSentinels([shouldBeSeekedSentinel, shouldBePausedSentinel]);
+      }
+
+      function toComplete () {
+        state = MediaPlayerBase.STATE.COMPLETE;
+        emitEvent(MediaPlayerBase.EVENT.COMPLETE);
+        setSentinels([]);
+      }
+
+      function toEmpty () {
+        wipe();
+        state = MediaPlayerBase.STATE.EMPTY;
+      }
+
+      function toError (errorMessage) {
+        wipe();
+        state = MediaPlayerBase.STATE.ERROR;
+        reportError(errorMessage);
+        throw 'ApiError: ' + errorMessage;
+      }
+
+      function isReadyToPlayFrom () {
+        if (readyToPlayFrom !== undefined) {
+          return readyToPlayFrom;
+        }
+        return false;
+      }
+
+      function getMediaDuration () {
+        if (mediaElement && isReadyToPlayFrom()) {
+          return mediaElement.duration;
+        }
+        return undefined;
+      }
+
+      function getSeekableRange () {
+        if (mediaElement) {
+          if (isReadyToPlayFrom() && mediaElement.seekable && mediaElement.seekable.length > 0) {
+            return {
+              start: mediaElement.seekable.start(0),
+              end: mediaElement.seekable.end(0)
+            };
+          } else if (mediaElement.duration !== undefined) {
+            return {
+              start: 0,
+              end: mediaElement.duration
+            };
+          } else {
+            RuntimeContext.getDevice().getLogger().warn('No \'duration\' or \'seekable\' on media element');
+          }
+        }
+        return undefined;
+      }
+
+      function onFinishedBuffering () {
+        exitBuffering();
+      }
+
+      function pauseMediaElement () {
+        mediaElement.pause();
+        ignoreNextPauseEvent = true;
+      }
+
+      function onPause () {
+        if (ignoreNextPauseEvent) {
+          ignoreNextPauseEvent = false;
+          return;
+        }
+
+        if (getState() !== MediaPlayerBase.STATE.PAUSED) {
+          toPaused();
+        }
+      }
+
+      function onError () {
+        reportError('Media element error code: ' + mediaElement.error.code);
+      }
+
+      function onSourceError () {
+        reportError('Media source element error');
+      }
+
+      function onDeviceBuffering () {
+        if (getState() === MediaPlayerBase.STATE.PLAYING) {
+          toBuffering();
+        }
+      }
+
+      function onEndOfMedia () {
+        toComplete();
+      }
+
+      function onStatus () {
+        if (getState() === MediaPlayerBase.STATE.PLAYING) {
+          emitEvent(MediaPlayerBase.EVENT.STATUS);
+        }
+      }
+
+      function onMetadata () {
+        metadataLoaded();
+      }
+
+      function exitBuffering () {
+        metadataLoaded();
+        if (getState() !== MediaPlayerBase.STATE.BUFFERING) {
+          return;
+        } else if (postBufferingState === MediaPlayerBase.STATE.PAUSED) {
+          toPaused();
+        } else {
+          toPlaying();
+        }
+      }
+
+      function metadataLoaded () {
+        readyToPlayFrom = true;
+        if (waitingToPlayFrom()) {
+          deferredPlayFrom();
+        }
+      }
+
+      function playFromIfReady () {
+        if (isReadyToPlayFrom()) {
+          if (waitingToPlayFrom()) {
+            deferredPlayFrom();
+          }
+        }
+      }
+
+      function waitingToPlayFrom () {
+        return targetSeekTime !== undefined;
+      }
+
+      function deferredPlayFrom () {
+        seekTo(targetSeekTime);
+        mediaElement.play();
+        if (postBufferingState === MediaPlayerBase.STATE.PAUSED) {
+          pauseMediaElement();
+        }
+        targetSeekTime = undefined;
+      }
+
+      function seekTo (seconds) {
+        var clampedTime = getClampedTimeForPlayFrom(seconds);
+        mediaElement.currentTime = clampedTime;
+        sentinelSeekTime = clampedTime;
+      }
+
+      function getCurrentTime () {
+        switch (getState()) {
+          case MediaPlayerBase.STATE.STOPPED:
+          case MediaPlayerBase.STATE.ERROR:
+            break;
+
+          default:
+            if (mediaElement) {
+              return mediaElement.currentTime;
+            }
+            break;
+        }
+        return undefined;
+      }
+
+      /**
+        * Time (in seconds) compared to current time within which seeking has no effect.
+        * @constant {Number}
+      */
+      var CURRENT_TIME_TOLERANCE = 1;
+
+      /**
+        * Check whether a time value is near to the current media play time.
+        * @param {Number} seconds The time value to test, in seconds from the start of the media
+        * @protected
+      */
+      function isNearToCurrentTime (seconds) {
+        var currentTime = getCurrentTime();
+        var targetTime = getClampedTime(seconds);
+        return Math.abs(currentTime - targetTime) <= CURRENT_TIME_TOLERANCE;
+      }
+
+      /**
+        * Clamp a time value so it does not exceed the current range.
+        * Clamps to near the end instead of the end itself to allow for devices that cannot seek to the very end of the media.
+        * @param {Number} seconds The time value to clamp in seconds from the start of the media
+        * @protected
+      */
+      function getClampedTime (seconds) {
+        var range = getSeekableRange();
+        var offsetFromEnd = getClampOffsetFromConfig();
+        var nearToEnd = Math.max(range.end - offsetFromEnd, range.start);
+        if (seconds < range.start) {
+          return range.start;
+        } else if (seconds > nearToEnd) {
+          return nearToEnd;
+        } else {
+          return seconds;
+        }
+      }
+
+      /**
+        * Offset used when attempting to playFrom() the end of media. This allows the media to play briefly before completing.
+        * @constant {Number}
+      */
+      var CLAMP_OFFSET_FROM_END_OF_RANGE = 1.1;
+
+      function getClampOffsetFromConfig () {
+        var clampOffsetFromEndOfRange;
+
+        if (config && config.streaming && config.streaming.overrides) {
+          clampOffsetFromEndOfRange = config.streaming.overrides.clampOffsetFromEndOfRange;
+        }
+
+        if (clampOffsetFromEndOfRange !== undefined) {
+          return clampOffsetFromEndOfRange;
+        } else {
+          return CLAMP_OFFSET_FROM_END_OF_RANGE;
+        }
+      }
+
+      function getClampedTimeForPlayFrom (seconds) {
+        var clampedTime = getClampedTime(seconds);
+        if (clampedTime !== seconds) {
+          var range = getSeekableRange();
+          RuntimeContext.getDevice().getLogger().debug('playFrom ' + seconds + ' clamped to ' + clampedTime + ' - seekable range is { start: ' + range.start + ', end: ' + range.end + ' }');
+        }
+        return clampedTime;
+      }
+
+      function wipe () {
+        mediaType = undefined;
+        source = undefined;
+        mimeType = undefined;
+        targetSeekTime = undefined;
+        sentinelSeekTime = undefined;
+        clearSentinels();
+        destroyMediaElement();
+        readyToPlayFrom = false;
+      }
+
+      function destroyMediaElement () {
+        if (mediaElement) {
+          mediaElement.removeEventListener('canplay', onFinishedBuffering, false);
+          mediaElement.removeEventListener('seeked', onFinishedBuffering, false);
+          mediaElement.removeEventListener('playing', onFinishedBuffering, false);
+          mediaElement.removeEventListener('error', onError, false);
+          mediaElement.removeEventListener('ended', onEndOfMedia, false);
+          mediaElement.removeEventListener('waiting', onDeviceBuffering, false);
+          mediaElement.removeEventListener('timeupdate', onStatus, false);
+          mediaElement.removeEventListener('loadedmetadata', onMetadata, false);
+          mediaElement.removeEventListener('pause', onPause, false);
+          sourceElement.removeEventListener('error', onSourceError, false);
+
+          removeElement(sourceElement);
+          unloadMediaSrc();
+          removeElement(mediaElement);
+
+          // TODO: Still needed?
+          // delete mediaElement;
+          // delete this._sourceElement;
+        }
+      }
+
+      function unloadMediaSrc () {
+        // Reset source as advised by HTML5 video spec, section 4.8.10.15:
+        // http://www.w3.org/TR/2011/WD-html5-20110405/video.html#best-practices-for-authors-using-media-elements
+        mediaElement.removeAttribute('src');
+        mediaElement.load();
+      }
+
+      return {
+        addEventCallback: function (thisArg, newCallback) {
+          eventCallback = function (event) {
+            newCallback.call(thisArg, event);
+          };
+        },
+
+        removeAllEventCallbacks: function () {
+          eventCallback = undefined;
+        },
+
+        initialiseMedia: function (type, url, mediaMimeType, sourceContainer, opts) {
+          opts = opts || {};
+          if (getState() === MediaPlayerBase.STATE.EMPTY) {
+            var idSuffix = 'Video';
+            if (mediaType === MediaPlayerBase.TYPE.AUDIO || mediaType === MediaPlayerBase.TYPE.LIVE_AUDIO) {
+              idSuffix = 'Audio';
+            }
+
+            setSeekSentinelTolerance();
+
+            disableSentinels = opts.disableSentinels;
+            mediaType = type;
+            source = url;
+            mimeType = mediaMimeType;
+
+            mediaElement = document.createElement(idSuffix.toLowerCase(), 'mediaPlayer' + idSuffix);
+            mediaElement.autoplay = false;
+            mediaElement.style.position = 'absolute';
+            mediaElement.style.top = '0px';
+            mediaElement.style.left = '0px';
+            mediaElement.style.width = '100%';
+            mediaElement.style.height = '100%';
+
+            mediaElement.addEventListener('canplay', onFinishedBuffering, false);
+            mediaElement.addEventListener('seeked', onFinishedBuffering, false);
+            mediaElement.addEventListener('playing', onFinishedBuffering, false);
+            mediaElement.addEventListener('error', onError, false);
+            mediaElement.addEventListener('ended', onEndOfMedia, false);
+            mediaElement.addEventListener('waiting', onDeviceBuffering, false);
+            mediaElement.addEventListener('timeupdate', onStatus, false);
+            mediaElement.addEventListener('loadedmetadata', onMetadata, false);
+            mediaElement.addEventListener('pause', onPause, false);
+
+            prependChildElement(sourceContainer, mediaElement);
+
+            sourceElement = generateSourceElement(url, mimeType);
+            sourceElement.addEventListener('error', onSourceError, false);
+
+            mediaElement.preload = 'auto';
+            appendChildElement(mediaElement, sourceElement);
+
+            mediaElement.load();
+
+            toStopped();
+          } else {
+            toError('Cannot set source unless in the \'' + MediaPlayerBase.STATE.EMPTY + '\' state');
+          }
+        },
+
+        playFrom: function (seconds) {
+          postBufferingState = MediaPlayerBase.STATE.PLAYING;
+          targetSeekTime = seconds;
+          sentinelLimits.seek.currentAttemptCount = 0;
+
+          switch (getState()) {
+            case MediaPlayerBase.STATE.PAUSED:
+            case MediaPlayerBase.STATE.COMPLETE:
+              trustZeroes = true;
+              toBuffering();
+              playFromIfReady();
+              break;
+
+            case MediaPlayerBase.STATE.BUFFERING:
+              playFromIfReady();
+              break;
+
+            case MediaPlayerBase.STATE.PLAYING:
+              trustZeroes = true;
+              toBuffering();
+              targetSeekTime = getClampedTimeForPlayFrom(seconds);
+              if (isNearToCurrentTime(targetSeekTime)) {
+                targetSeekTime = undefined;
+                toPlaying();
+              } else {
+                playFromIfReady();
+              }
+              break;
+
+            default:
+              toError('Cannot playFrom while in the \'' + getState() + '\' state');
+              break;
+          }
+        },
+
+        beginPlayback: function () {
+          postBufferingState = MediaPlayerBase.STATE.PLAYING;
+          sentinelSeekTime = undefined;
+          switch (getState()) {
+            case MediaPlayerBase.STATE.STOPPED:
+              trustZeroes = true;
+              toBuffering();
+              mediaElement.play();
+              break;
+
+            default:
+              toError('Cannot beginPlayback while in the \'' + getState() + '\' state');
+              break;
+          }
+        },
+
+        beginPlaybackFrom: function (seconds) {
+          postBufferingState = MediaPlayerBase.STATE.PLAYING;
+          targetSeekTime = seconds;
+          sentinelLimits.seek.currentAttemptCount = 0;
+
+          switch (this.getState()) {
+            case MediaPlayerBase.STATE.STOPPED:
+              trustZeroes = true;
+              toBuffering();
+              playFromIfReady();
+              break;
+
+            default:
+              toError('Cannot beginPlaybackFrom while in the \'' + getState() + '\' state');
+              break;
+          }
+        },
+
+        pause: function () {
+          postBufferingState = MediaPlayerBase.STATE.PAUSED;
+          switch (getState()) {
+            case MediaPlayerBase.STATE.PAUSED:
+              break;
+
+            case MediaPlayerBase.STATE.BUFFERING:
+              sentinelLimits.pause.currentAttemptCount = 0;
+              if (isReadyToPlayFrom()) {
+                // If we are not ready to playFrom, then calling pause would seek to the start of media, which we might not want.
+                pauseMediaElement();
+              }
+              break;
+
+            case MediaPlayerBase.STATE.PLAYING:
+              sentinelLimits.pause.currentAttemptCount = 0;
+              pauseMediaElement();
+              toPaused();
+              break;
+
+            default:
+              toError('Cannot pause while in the \'' + getState() + '\' state');
+              break;
+          }
+        },
+
+        resume: function () {
+          postBufferingState = MediaPlayerBase.STATE.PLAYING;
+          switch (getState()) {
+            case MediaPlayerBase.STATE.PLAYING:
+              break;
+
+            case MediaPlayerBase.STATE.BUFFERING:
+              if (isReadyToPlayFrom()) {
+                // If we are not ready to playFrom, then calling play would seek to the start of media, which we might not want.
+                mediaElement.play();
+              }
+              break;
+
+            case MediaPlayerBase.STATE.PAUSED:
+              mediaElement.play();
+              toPlaying();
+              break;
+
+            default:
+              toError('Cannot resume while in the \'' + getState() + '\' state');
+              break;
+          }
+        },
+
+        stop: function () {
+          switch (getState()) {
+            case MediaPlayerBase.STATE.STOPPED:
+              break;
+
+            case MediaPlayerBase.STATE.BUFFERING:
+            case MediaPlayerBase.STATE.PLAYING:
+            case MediaPlayerBase.STATE.PAUSED:
+            case MediaPlayerBase.STATE.COMPLETE:
+              pauseMediaElement();
+              toStopped();
+              break;
+
+            default:
+              toError('Cannot stop while in the \'' + getState() + '\' state');
+              break;
+          }
+        },
+
+        reset: function () {
+          switch (getState()) {
+            case MediaPlayerBase.STATE.EMPTY:
+              break;
+
+            case MediaPlayerBase.STATE.STOPPED:
+            case MediaPlayerBase.STATE.ERROR:
+              toEmpty();
+              break;
+
+            default:
+              toError('Cannot reset while in the \'' + getState() + '\' state');
+              break;
+          }
+        },
+
+        getSeekableRange: function () {
+          switch (getState()) {
+            case MediaPlayerBase.STATE.STOPPED:
+            case MediaPlayerBase.STATE.ERROR:
+              break;
+
+            default:
+              return getSeekableRange();
+          }
+          return undefined;
+        },
+
+        getState: function () {
+          return state;
+        },
+
+        getPlayerElement: function () {
+          return mediaElement;
+        },
+
+        getSource: getSource,
+
+        getMimeType: getMimeType,
+
+        getCurrentTime: getCurrentTime,
+
+        getDuration: getDuration
+      };
     }
+
+    return Player;
+  }
 );

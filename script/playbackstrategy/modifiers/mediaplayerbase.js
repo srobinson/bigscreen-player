@@ -46,7 +46,6 @@ define(
           LIVE_VIDEO: 'live-video',
           LIVE_AUDIO: 'live-audio'
         }
-
       };
     }
 );
