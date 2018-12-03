@@ -306,7 +306,8 @@ define(
       }
 
       function reportError (errorMessage) {
-        RuntimeContext.getDevice().getLogger().error(errorMessage);
+        // TODO: replace this with Debug logs?
+        // RuntimeContext.getDevice().getLogger().error(errorMessage);
         emitEvent(MediaPlayerBase.EVENT.ERROR, { 'errorMessage': errorMessage });
       }
 
@@ -343,7 +344,7 @@ define(
         wipe();
         state = MediaPlayerBase.STATE.ERROR;
         reportError(errorMessage);
-        throw 'ApiError: ' + errorMessage;
+        // throw 'ApiError: ' + errorMessage; // TODO: fix this
       }
 
       function isReadyToPlayFrom () {
@@ -373,7 +374,8 @@ define(
               end: mediaElement.duration
             };
           } else {
-            RuntimeContext.getDevice().getLogger().warn('No \'duration\' or \'seekable\' on media element');
+            // TODO: replace this with Debug logs?
+            // RuntimeContext.getDevice().getLogger().warn('No \'duration\' or \'seekable\' on media element');
           }
         }
         return undefined;
@@ -532,9 +534,10 @@ define(
       function getClampOffsetFromConfig () {
         var clampOffsetFromEndOfRange;
 
-        if (config && config.streaming && config.streaming.overrides) {
-          clampOffsetFromEndOfRange = config.streaming.overrides.clampOffsetFromEndOfRange;
-        }
+        // TODO: can we tidy this, is it needed any more? If so we can combine it into bigscreen-player configs
+        // if (config && config.streaming && config.streaming.overrides) {
+        //   clampOffsetFromEndOfRange = config.streaming.overrides.clampOffsetFromEndOfRange;
+        // }
 
         if (clampOffsetFromEndOfRange !== undefined) {
           return clampOffsetFromEndOfRange;
@@ -546,8 +549,8 @@ define(
       function getClampedTimeForPlayFrom (seconds) {
         var clampedTime = getClampedTime(seconds);
         if (clampedTime !== seconds) {
-          var range = getSeekableRange();
-          RuntimeContext.getDevice().getLogger().debug('playFrom ' + seconds + ' clamped to ' + clampedTime + ' - seekable range is { start: ' + range.start + ', end: ' + range.end + ' }');
+          // TODO: replace this with Debug logs?
+          // RuntimeContext.getDevice().getLogger().debug('playFrom ' + seconds + ' clamped to ' + clampedTime + ' - seekable range is { start: ' + range.start + ', end: ' + range.end + ' }');
         }
         return clampedTime;
       }

@@ -4,9 +4,10 @@ define('bigscreenplayer/playbackstrategy/talstrategy',
     'bigscreenplayer/models/mediastate',
     'bigscreenplayer/models/windowtypes',
     'bigscreenplayer/debugger/debugtool',
-    'bigscreenplayer/playbackstrategy/liveglitchcurtain'
+    'bigscreenplayer/playbackstrategy/liveglitchcurtain',
+    'bigscreenplayer/playbackstrategy/modifiers/html5'
   ],
-  function (AllowedMediaTransitions, MediaState, WindowTypes, DebugTool, LiveGlitchCurtain) {
+  function (AllowedMediaTransitions, MediaState, WindowTypes, DebugTool, LiveGlitchCurtain, HTML5Player) {
     return function (windowType, mediaKind, timeData, playbackElement, isUHD, device) {
       var EVENT_HISTORY_LENGTH = 2;
 
@@ -32,7 +33,11 @@ define('bigscreenplayer/playbackstrategy/talstrategy',
 
       var liveGlitchCurtain;
 
-      var config = device.getConfig();
+      var config = {
+        streaming: {},
+        capabilities: []
+      };
+
       var setSourceOpts = {
         disableSentinels: !!isUHD && windowType !== WindowTypes.STATIC && config.streaming && config.streaming.liveUhdDisableSentinels
       };
@@ -40,11 +45,12 @@ define('bigscreenplayer/playbackstrategy/talstrategy',
       mediaPlayer.addEventCallback(this, eventHandler);
 
       function getMediaPlayer (windowType) {
-        if (windowType === WindowTypes.STATIC) {
-          return device.getMediaPlayer();
-        } else {
-          return device.getLivePlayer();
-        }
+        // if (windowType === WindowTypes.STATIC) {
+        //   return device.getMediaPlayer();
+        // } else {
+        //   return device.getLivePlayer();
+        // }
+        return new HTML5Player();
       }
 
       function eventHandler (event) {
